@@ -53,6 +53,8 @@
         </div>
 
         <div class="modal-body">
+          <!-- 使用全局错误弹窗替代本地错误横幅 -->
+
           <!-- 添加按钮 -->
           <div class="add-section">
             <button @click="showAddForm = !showAddForm" class="add-btn">
@@ -130,6 +132,7 @@ interface DefaultFolder {
 const emit = defineEmits<{
   close: []
   folderSelected: [path: string]
+  error: [message: string, details?: string]
 }>()
 
 const customFolderInput = ref<HTMLInputElement>()
@@ -138,119 +141,31 @@ const inputPath = ref('')
 const pathError = ref('')
 const showAddForm = ref(false)
 const showFoldersModal = ref(false)
+const scanError = ref('')
+const scanErrorDetails = ref('')
 
-// 文件夹预览相关
+// 扫描状态与目录数据
 const currentFolderPath = ref('')
 const folderFiles = ref<NCMFile[]>([])
 const isScanning = ref(false)
-
-// 新文件夹表单
-const newFolder = ref({
-  name: '',
-  path: '',
-  description: ''
-})
-
-// 默认音乐文件夹列表
 const defaultMusicFolders = ref<DefaultFolder[]>([])
+const newFolder = ref<{ name: string; path: string; description?: string }>({ name: '', path: '', description: '' })
 
-const getCurrentUsername = async (): Promise<string> => {
-  // 在浏览器环境中，尝试从不同来源获取用户名
-  if (typeof window !== 'undefined') {
-    // 尝试从Electron API获取
-    if (window.electronAPI && window.electronAPI.getCurrentUsername) {
-      try {
-        const username = await window.electronAPI.getCurrentUsername()
-        return username || '用户名'
-      } catch (error) {
-        console.warn('无法从Electron API获取用户名:', error)
-      }
-    }
-
-    // 尝试从环境变量获取（如果可用）
-    if (typeof process !== 'undefined' && process.env) {
-      return process.env.USERNAME || process.env.USER || '用户名'
-    }
-
-    // 尝试从URL或其他浏览器API获取
-    try {
-      // 这里可以添加其他获取用户名的方法
-      return '用户名'
-    } catch (error) {
-      console.warn('无法获取用户名:', error)
-    }
-  }
-
-  return '用户名'
-}
-
-// 初始化默认文件夹
-const initializeDefaultFolders = async () => {
-  const username = await getCurrentUsername()
-
-  if (typeof window !== 'undefined' && window.navigator.platform.includes('Win')) {
-    // Windows 系统
-    defaultMusicFolders.value = [
-      {
-        name: '网易云音乐',
-        path: `C:\\Users\\${username}\\Music\\CloudMusic\\VipSongsDownload`,
-        icon: '🎵',
-        description: '网易云音乐(会员音乐)默认下载目录'
-      },
-      // {
-      //   name: 'QQ音乐',
-      //   path: `C:\\Users\\${username}\\Music\\QQMusic`,
-      //   icon: '🎶',
-      //   description: 'QQ音乐默认下载目录'
-      // },
-      // {
-      //   name: '酷狗音乐',
-      //   path: `C:\\Users\\${username}\\Music\\KuGou`,
-      //   icon: '🎤',
-      //   description: '酷狗音乐默认下载目录'
-      // },
-      // {
-      //   name: '音乐文件夹',
-      //   path: `C:\\Users\\${username}\\Music`,
-      //   icon: '🎼',
-      //   description: 'Windows 默认音乐文件夹'
-      // },
-      // {
-      //   name: '下载文件夹',
-      //   path: `C:\\Users\\${username}\\Downloads`,
-      //   icon: '⬇️',
-      //   description: 'Windows 默认下载文件夹'
-      // }
-    ]
-  } else {
-    // 其他系统（macOS, Linux等）
-    defaultMusicFolders.value = [
-      {
-        name: '音乐文件夹',
-        path: 'C:\\Users\\用户名\\Music',
-        icon: '🎼',
-        description: 'Windows 默认音乐文件夹（请手动修改用户名）'
-      },
-      {
-        name: '下载文件夹',
-        path: 'C:\\Users\\用户名\\Downloads',
-        icon: '⬇️',
-        description: 'Windows 默认下载文件夹（请手动修改用户名）'
-      }
-    ]
-  }
-}
-
-// 计算属性
+// 计算属性：输入路径合法性与添加目录表单可用性
 const isValidPath = computed(() => {
-  return inputPath.value.trim().length > 0 && !pathError.value
+  const path = inputPath.value.trim()
+  if (!path) return false
+  return !pathError.value
 })
-
 const canAddFolder = computed(() => {
-  return newFolder.value.name.trim() && newFolder.value.path.trim()
+  return newFolder.value.name.trim().length > 0 && newFolder.value.path.trim().length > 0
 })
 
-// 路径输入处理
+const clearScanError = () => {
+  scanError.value = ''
+  scanErrorDetails.value = ''
+}
+
 const handlePathInput = () => {
   pathError.value = ''
   validatePath(inputPath.value)
@@ -298,8 +213,18 @@ const previewFolder = async (path: string) => {
     currentFolderPath.value = path
     isScanning.value = true
     folderFiles.value = []
+    clearScanError()
 
     console.log('🔍 开始扫描文件夹:', path)
+
+    // 先检查目录是否存在，避免直接抛错导致用户没有提示
+    if (window.electronAPI && window.electronAPI.checkFileExists) {
+      const exists = await window.electronAPI.checkFileExists(path)
+      if (!exists) {
+        emit('error', '指定的目录不存在', `路径: ${path}\n\n请检查路径是否正确，或在常用目录中手动修改用户名后再试。`)
+        return
+      }
+    }
 
     if (window.electronAPI) {
       const result = await window.electronAPI.scanFolder(path)
@@ -308,6 +233,9 @@ const previewFolder = async (path: string) => {
       if (result && result.files) {
         folderFiles.value = result.files
         console.log(`✅ 找到 ${result.files.length} 个 NCM 文件`)
+        // 与“选择文件夹”逻辑保持一致：扫描到文件后直接进入处理流程
+        showFoldersModal.value = false
+        emit('folderSelected', path)
       } else {
         folderFiles.value = []
         console.log('❌ 未找到任何 NCM 文件')
@@ -315,10 +243,19 @@ const previewFolder = async (path: string) => {
     } else {
       console.warn('⚠️ 非 Electron 环境，无法扫描文件夹')
       folderFiles.value = []
+      emit('error', '无法在当前环境扫描文件夹', '请使用桌面应用以进行扫描。')
     }
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('扫描文件夹失败:', error)
     folderFiles.value = []
+
+    // 显示友好的错误提示
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes('文件夹不存在') || message.includes('指定的目录不存在')) {
+      emit('error', '指定的目录不存在', `路径: ${path}\n\n请检查路径是否正确，或选择其他目录。`)
+    } else {
+      emit('error', '扫描文件夹时发生错误', message)
+    }
   } finally {
     isScanning.value = false
   }
@@ -375,7 +312,7 @@ const addNewFolder = () => {
       name: newFolder.value.name.trim(),
       path: newFolder.value.path.trim(),
       icon: '📁',
-      description: newFolder.value.description.trim() || '用户自定义目录'
+      description: (newFolder.value.description ?? '').trim() || '用户自定义目录'
     }
 
     defaultMusicFolders.value.push(folder)
@@ -439,6 +376,52 @@ const loadDefaultFolders = async () => {
 onMounted(async () => {
   await loadDefaultFolders()
 })
+
+// 初始化默认目录（自动替换Windows当前用户名）
+const initializeDefaultFolders = async () => {
+  let username = '用户名'
+  try {
+    if (window.electronAPI && typeof window.electronAPI.getCurrentUsername === 'function') {
+      const u = await window.electronAPI.getCurrentUsername()
+      if (u && typeof u === 'string' && u !== 'Unknown') {
+        username = u
+      }
+    }
+  } catch (error) {
+    console.warn('获取当前用户名失败，使用占位符用户名', error)
+  }
+
+  const baseWin = `C:\\Users\\${username}`
+  const candidates: DefaultFolder[] = [
+    {
+      name: '网易云 - 下载目录',
+      path: `${baseWin}\\Music\\CloudMusic\\VipSongsDownload`,
+      icon: '🎵',
+      description: '网易云音乐会员歌曲默认下载目录（不同用户名/安装方式可能不存在）'
+    },
+    // {
+    //   name: '下载',
+    //   path: `${baseWin}\\Downloads`,
+    //   icon: '📥',
+    //   description: '系统默认下载目录（可能放有NCM文件）'
+    // },
+    // {
+    //   name: '音乐',
+    //   path: `${baseWin}\\Music`,
+    //   icon: '🎼',
+    //   description: '系统音乐目录'
+    // },
+    // {
+    //   name: '桌面',
+    //   path: `${baseWin}\\Desktop`,
+    //   icon: '🖥️',
+    //   description: '桌面目录（若你把NCM放在桌面）'
+    // }
+  ]
+
+  // 不做存在性过滤，按照你的需求保留功能，仅在点击预览时提示不存在
+  defaultMusicFolders.value = candidates
+}
 </script>
 
 <style scoped>
@@ -1078,5 +1061,34 @@ onMounted(async () => {
     border-left: none;
     border-right: none;
   }
+}
+.error-banner {
+  border: 2px solid #ef4444;
+  background: #fef2f2;
+  color: #991b1b;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+.error-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.error-details {
+  white-space: pre-wrap;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.error-close {
+  margin-top: 10px;
+  padding: 6px 12px;
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.error-close:hover {
+  background: #dc2626;
 }
 </style>

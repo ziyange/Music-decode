@@ -75,7 +75,8 @@
             <!-- 文件夹选择组件 -->
             <FolderSelectionModal
               :visible="true"
-              @folder-selected="handleModalFolderSelect" />
+              @folder-selected="handleModalFolderSelect"
+              @error="showError" />
 
             <!-- 显示选中的文件夹路径 -->
             <div v-if="selectedFolder" class="selected-folder">

@@ -9,11 +9,17 @@ const __dirname = path.dirname(__filename)
 
 // 保持对窗口对象的全局引用，如果不这样做，当JavaScript对象被垃圾回收时，窗口会被自动关闭
 let mainWindow
+let viteProcess
 
-function createWindow() {
+async function createWindow() {
   // 创建浏览器窗口
   // 检测是否为开发环境，打包后app.isPackaged为true
   const isDev = !app.isPackaged
+
+  // 在开发环境下，关闭 Electron 的安全警告提示（仅开发环境）
+  if (isDev) {
+    process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true'
+  }
 
   // 在打包后的应用中，preload.cjs会被打包到app.asar中
   const preloadPath = isDev
@@ -39,11 +45,27 @@ function createWindow() {
 
   // 在开发环境中加载开发服务器，在生产环境中加载构建后的文件
   if (isDev) {
-    // 开发环境：加载开发服务器
-    console.log('开发环境：加载开发服务器')
-    mainWindow.loadURL('http://localhost:5173')
-    // 开发环境打开开发者工具
-    mainWindow.webContents.openDevTools()
+    console.log('开发环境：尝试连接开发服务器')
+    const devUrl = 'http://localhost:5173'
+    let ready = await waitForDevServer(devUrl, 5000)
+    if (!ready) {
+      console.log('开发服务器未就绪，尝试启动 Vite...')
+      try {
+        await startViteDevServer()
+      } catch (err) {
+        console.warn('启动 Vite 失败:', err)
+      }
+      ready = await waitForDevServer(devUrl, 30000)
+    }
+    if (ready) {
+      mainWindow.loadURL(devUrl)
+      // 开发环境打开开发者工具
+      mainWindow.webContents.openDevTools()
+    } else {
+      console.warn('开发服务器仍不可用，回退到占位页面')
+      const html = encodeURIComponent(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>开发服务器不可用</title><style>html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center} .card{max-width:720px;padding:24px 28px;border-radius:16px;background:#111827;border:1px solid #1f2937;box-shadow:0 10px 30px rgba(0,0,0,.4)} h1{font-size:22px;margin:0 0 12px} p{line-height:1.6;margin:0 0 8px;color:#94a3b8} code{background:#0b1220;color:#93c5fd;padding:2px 6px;border-radius:6px} .btn{display:inline-block;margin-top:14px;padding:8px 12px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none} .btn:hover{background:#1d4ed8}</style></head><body><div class="card"><h1>开发服务器未启动</h1><p>Electron 正尝试加载 <code>${devUrl}</code>，但未检测到可用的 Vite 开发服务器。</p><p>请在项目根目录运行：<code>npm run dev</code>，或稍后再试。</p><a class="btn" href="${devUrl}">重试打开开发地址</a></div></body></html>`)
+      mainWindow.loadURL(`data:text/html;charset=utf-8,${html}`)
+    }
   } else {
     // 生产环境：直接加载构建后的文件
     const indexPath = path.join(__dirname, '../dist/index.html')
@@ -56,24 +78,17 @@ function createWindow() {
     mainWindow.show()
   })
 
-  // 设置安全响应头
+  // 设置安全响应头（去掉重复注册，按环境设置 CSP）
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    const isDevEnv = !app.isPackaged
+    const cspDev = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https: ws:; media-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    const cspProd = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     callback({
       responseHeaders: {
         ...details.responseHeaders,
         'X-Frame-Options': ['DENY'],
-        'X-Content-Type-Options': ['nosniff']
-      }
-    })
-  })
-
-  // 设置安全响应头
-  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'X-Frame-Options': ['DENY'],
-        'X-Content-Type-Options': ['nosniff']
+        'X-Content-Type-Options': ['nosniff'],
+        'Content-Security-Policy': [isDevEnv ? cspDev : cspProd]
       }
     })
   })
@@ -103,6 +118,62 @@ app.on('activate', () => {
     createWindow()
   }
 })
+
+// 在应用退出时清理 Vite 进程
+app.on('before-quit', () => {
+  if (viteProcess) {
+    try {
+      viteProcess.kill()
+    } catch (e) {
+      console.warn('关闭 Vite 开发服务器进程失败:', e)
+    }
+  }
+})
+
+// 等待开发服务器就绪
+async function waitForDevServer(url, timeoutMs = 15000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(url, { method: 'GET' })
+      if (res.ok) return true
+    } catch (err) {
+      // 未就绪，继续等待
+    }
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  return false
+}
+
+// 启动 Vite 开发服务器
+function startViteDevServer() {
+  return new Promise((resolve, reject) => {
+    const projectRoot = path.join(__dirname, '..')
+    try {
+      const command = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+      const args = ['run', 'dev']
+      viteProcess = spawn(command, args, {
+        cwd: projectRoot,
+        shell: process.platform === 'win32',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env }
+      })
+    } catch (err) {
+      return reject(err)
+    }
+    viteProcess.on('spawn', () => {
+      console.log('已启动 Vite 开发服务器进程')
+      resolve()
+    })
+    viteProcess.on('error', (err) => {
+      reject(err)
+    })
+    viteProcess.stderr.on('data', (d) => {
+      const msg = d.toString()
+      if (msg.toLowerCase().includes('error')) console.warn('[vite]', msg)
+    })
+  })
+}
 
 // IPC处理程序
 ipcMain.handle('select-folder', async () => {
@@ -250,7 +321,54 @@ ipcMain.handle('convert-ncm', async (event, inputPath, outputPath) => {
       throw new Error('ncmdump.exe 不存在')
     }
 
-    // 解密NCM文件
+    // 执行ncmdump命令
+    const args = [inputPath, '-o', outputDir]
+    const result = await executeCommand(ncmdumpPath, args)
+
+    // 查找输出文件（基于输入文件名）
+    if (result.success) {
+      const fileInfo = path.parse(inputPath)
+      const baseName = fileInfo.name
+      const possibleExtensions = ['.mp3', '.flac', '.wav', '.m4a']
+      let detectedOutputPath = null
+      let detectedFilename = null
+      for (const ext of possibleExtensions) {
+        const testPath = path.join(outputDir, baseName + ext)
+        if (fs.existsSync(testPath)) {
+          detectedOutputPath = testPath
+          detectedFilename = baseName + ext
+          break
+        }
+      }
+      return {
+        success: true,
+        error: undefined,
+        outputPath: detectedOutputPath,
+        filename: detectedFilename
+      }
+    } else {
+      return {
+        success: false,
+        error: result.error
+      }
+    }
+
+    return {
+      success: result.success,
+      error: result.error,
+      outputPath: result.success ? outputPath : undefined
+    }
+  } catch (error) {
+    console.error('转换NCM文件错误:', error)
+    return {
+      success: false,
+      error: error.message
+    }
+  }
+})
+
+// 重复定义已移除
+
 ipcMain.handle('decrypt-ncm', async (event, filePath) => {
   try {
     const isDev = !app.isPackaged
@@ -266,72 +384,28 @@ ipcMain.handle('decrypt-ncm', async (event, filePath) => {
       throw new Error('输入文件不存在')
     }
 
-    // 获取文件信息
     const fileInfo = path.parse(filePath)
     const outputDir = fileInfo.dir
 
-    // 执行ncmdump命令解密文件
     const args = [filePath, '-o', outputDir]
     const result = await executeCommand(ncmdumpPath, args)
 
-    if (result.success) {
-      // 查找输出文件
-      const baseName = fileInfo.name
-      const possibleExtensions = ['.mp3', '.flac', '.wav', '.m4a']
-      let outputPath = null
-      let outputFilename = null
+    if (!result.success) {
+      return { success: false, error: result.error || '解密失败' }
+    }
 
-      for (const ext of possibleExtensions) {
-        const testPath = path.join(outputDir, baseName + ext)
-        if (fs.existsSync(testPath)) {
-          outputPath = testPath
-          outputFilename = baseName + ext
-          break
-        }
-      }
-
-      if (outputPath) {
-        return {
-          success: true,
-          outputPath: outputPath,
-          filename: outputFilename
-        }
-      } else {
-        return {
-          success: false,
-          error: '解密成功但未找到输出文件'
-        }
-      }
-    } else {
-      return {
-        success: false,
-        error: result.error || '解密失败'
+    const baseName = fileInfo.name
+    const possibleExtensions = ['.mp3', '.flac', '.wav', '.m4a']
+    for (const ext of possibleExtensions) {
+      const testPath = path.join(outputDir, baseName + ext)
+      if (fs.existsSync(testPath)) {
+        return { success: true, outputPath: testPath, filename: baseName + ext }
       }
     }
+    return { success: false, error: '解密成功但未找到输出文件' }
   } catch (error) {
     console.error('解密NCM文件错误:', error)
-    return {
-      success: false,
-      error: error.message
-    }
-  }
-})
-
-// 执行ncmdump命令
-    const args = [inputPath, '-o', outputDir]
-    const result = await executeCommand(ncmdumpPath, args)
-
-    return {
-      success: result.success,
-      error: result.error,
-      outputPath: result.success ? outputPath : undefined
-    }
-  } catch (error) {
-    console.error('转换NCM文件错误:', error)
-    return {
-      success: false,
-      error: error.message
-    }
+    return { success: false, error: error.message }
   }
 })
 
