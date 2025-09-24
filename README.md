@@ -23,8 +23,8 @@
 - Node.js >= 18，建议安装 Git
 
 2) 克隆与安装
-- git clone https://github.com/ziyange/music-decoder.git
-- cd music-decoder && npm install
+- git clone https://github.com/ziyange/Music-decode.git
+- cd Music-decode && npm install
 
 3) 本地开发
 - npm run electron-dev  // 启动前端与 Electron 主进程联调
@@ -57,10 +57,10 @@
 
 发布与 Releases
 - 建议仅发布源代码与合法可分发的说明文档；如需发布安装包，请确保安装包中不包含任何用于绕过版权保护的组件或说明。
-- Releases: https://github.com/ziyange/music-decoder/releases
+- Releases: https://github.com/ziyange/Music-decode/releases
 
 问题反馈与计划
-- Issues: https://github.com/ziyange/music-decoder/issues
+- Issues: https://github.com/ziyange/Music-decode/issues
 - 欢迎提交 bug 与功能建议，建议使用下方的模板（我们将在仓库中提供基础模板）。
 
 贡献与许可证
