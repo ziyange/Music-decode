@@ -36,7 +36,7 @@
 可选的第三方工具集成（合规前提）
 - 本项目在架构上预留了对第三方开源工具（例如 ncmdump）进行调用的接口，以便在合法授权范围内处理你拥有权利的音频文件。
 - 第三方工具不包含在本仓库内，亦不提供下载链接或使用指令；如需了解该工具，请访问其官方仓库主页并遵循许可证与法律使用。
-- 若你决定自行集成：请将二进制放置在 app/ 目录，并在构建时通过 electron-builder 的 extraResources 机制打包；注意本仓库的 .gitignore 已排除二进制上传。
+- 若你决定自行集成：请将二进制放置在 app/ 目录，并在构建时通过 electron-builder 的 extraResources 机制打包；注意本仓库的 .gitignore 已排除二进制上传。（网易云：https://github.com/taurusxin/ncmdump/releases/tag/1.5.0）
 
 使用说明（界面与流程参考）
 - 请参见本地文档：Music Decoder使用方法.md（仅作界面与流程参考，避免任何可能涉及绕过加密的场景）。
@@ -70,3 +70,4 @@
 致谢
 - Vue、Electron、Vite 等优秀开源生态
 - 社区贡献者
+- ncmdump 项目：https://github.com/taurusxin/ncmdump
