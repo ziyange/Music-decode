@@ -1,0 +1,25 @@
+@import './base.css';
+
+/* 移除对#app的宽度限制，让背景撑满整个页面 */
+#app {
+  font-weight: normal;
+}
+
+a,
+.green {
+  text-decoration: none;
+  color: hsla(160, 100%, 37%, 1);
+  transition: 0.4s;
+  padding: 3px;
+}
+
+@media (hover: hover) {
+  a:hover {
+    background-color: hsla(160, 100%, 37%, 0.2);
+  }
+}
+
+/* 移除响应式布局中对body和#app的限制 */
+@media (min-width: 1024px) {
+  /* 保持空白，不再限制布局 */
+}

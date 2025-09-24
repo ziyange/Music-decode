@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Q&A / 使用咨询
+    url: https://github.com/ziyange/music-decoder/discussions
+    about: 非 bug 问题请在 Discussions 发帖交流
